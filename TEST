@@ -1,0 +1,136 @@
+// This code is for the front house side LED garge light.
+// The code defines PWM characteristics for the lighting.
+// PWM Voltage: 10V (output through a MOSFET, IRF-520)
+// PWM Frequency: 1kHz
+
+#include <ESP8266WiFi.h>
+#include <WiFiClientSecure.h>
+#include <time.h>
+#include <Losant.h>
+
+int LightLevel = 50;
+bool SwitchPosition = 1;
+
+// WiFi credentials.
+const char* WIFI_SSID = "DECO";
+const char* WIFI_PASS = "12345679";
+
+// Losant credentials.
+const char* LOSANT_DEVICE_ID = "losant-device-id";
+const char* LOSANT_ACCESS_KEY = "losant-access-key";
+const char* LOSANT_ACCESS_SECRET = "losant-access-secret";
+
+uint8_t PWMpin = D1;
+
+// Cert taken from 
+// https://github.com/Losant/losant-mqtt-ruby/blob/master/lib/losant_mqtt/RootCA.crt
+static const char digicert[] PROGMEM = R"EOF(
+-----BEGIN CERTIFICATE-----
+CERT
+-----END CERTIFICATE-----
+)EOF";
+
+BearSSL::WiFiClientSecure wifiClient;
+
+LosantDevice device(LOSANT_DEVICE_ID);
+
+// Set time via NTP, as required for x.509 validation
+void setClock() {
+  configTime(3 * 3600, 0, "pool.ntp.org", "time.nist.gov");
+
+  time_t now = time(nullptr);
+  while (now < 8 * 3600 * 2) {
+    delay(500);
+    now = time(nullptr);
+  }
+  struct tm timeinfo;
+  gmtime_r(&now, &timeinfo);
+}
+
+void connect() {
+
+  // Connect to Wifi.
+  Serial.println();
+  Serial.println();
+  delay(500);
+  Serial.print("Connecting to ");
+  Serial.println(WIFI_SSID);
+
+  WiFi.begin(WIFI_SSID, WIFI_PASS);
+
+  while (WiFi.status() != WL_CONNECTED) {
+    delay(500);
+    Serial.print(".");
+  }
+
+  // Validating  the SSL for for a secure connection you must
+  // set trust anchor, as well as set the time.
+  BearSSL::X509List cert(digicert);
+  wifiClient.setTrustAnchors(&cert);
+  setClock();
+  
+
+  Serial.println("");
+  Serial.println("WiFi connected");
+  Serial.println("IP address: ");
+  Serial.println(WiFi.localIP());
+
+  // Connect to Losant.
+  Serial.println();
+  Serial.print("Connecting to Losant...");
+
+  device.connectSecure(wifiClient, LOSANT_ACCESS_KEY, LOSANT_ACCESS_SECRET);
+
+  while(!device.connected()) {
+    delay(500);
+    Serial.print(".");
+  }
+
+  Serial.println("Connected!");
+}
+
+
+void setup() {
+  Serial.begin(115200);
+  while(!Serial) { }
+  pinMode(PWMpin, OUTPUT);
+
+
+  // Register the command handler to be called when a command is received
+  // from the Losant platform.
+  device.onCommand(&handleCommand);
+
+  connect();
+}
+
+// Called whenever the device receives a command from the Losant platform.
+void handleCommand(LosantCommand *command) {
+  Serial.print("Command received: ");
+  Serial.println(command->name);
+  
+  // Perform action specific to the command received.
+  command->payload->lightLevel;
+
+
+void loop() {
+
+  bool toReconnect = false;
+
+  if(WiFi.status() != WL_CONNECTED) {
+    Serial.println("Disconnected from WiFi");
+    toReconnect = true;
+  }
+
+  if(!device.connected()) {
+    Serial.println("Disconnected from Losant");
+    toReconnect = true;
+  }
+
+  if(toReconnect) {
+    connect();
+  }
+
+  device.loop();
+
+  
+}
